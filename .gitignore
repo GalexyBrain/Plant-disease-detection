@@ -1,0 +1,7 @@
+.venv/
+best_vit_model.pt
+dataset/
+PlantVillage/
+vit-plant-disease/
+final_vit_model.pt
+CNN_Model.keras
