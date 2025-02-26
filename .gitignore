@@ -1,9 +1,9 @@
 .venv/
 best_vit_model.pt
-dataset/
+dataset*/
 PlantVillage/
 vit-plant-disease/
 final_vit_model.pt
 CNN_Model.keras
 archive/
-temp.jpeg
+temp*
