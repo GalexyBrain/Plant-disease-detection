@@ -68,7 +68,7 @@ model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 # Use a scheduler that reduces LR when validation accuracy plateaus
-scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=3, verbose=True)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=3)
 
 # Training loop with checkpointing (saves best model based on validation accuracy)
 best_model_wts = copy.deepcopy(model.state_dict())
