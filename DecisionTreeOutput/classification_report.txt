@@ -1,0 +1,15 @@
+                     precision    recall  f1-score   support
+
+       Healthy_Leaf       0.62      0.63      0.63       152
+        Healthy_Nut       0.86      0.81      0.83       472
+      Healthy_Trunk       0.63      0.69      0.66       359
+    Mahali_Koleroga       0.83      0.82      0.82       641
+      Stem_bleeding       0.31      0.37      0.34        38
+          bud borer       0.26      0.25      0.25        36
+       healthy_foot       0.31      0.31      0.31        13
+      stem cracking       0.48      0.43      0.45       135
+yellow leaf disease       0.67      0.67      0.67       370
+
+           accuracy                           0.71      2216
+          macro avg       0.55      0.55      0.55      2216
+       weighted avg       0.72      0.71      0.72      2216
