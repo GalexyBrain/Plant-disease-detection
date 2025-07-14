@@ -72,6 +72,7 @@ plt.title("Confusion Matrix")
 
 plt.tight_layout()  # ✅ Prevent clipping
 plt.savefig("confusion_matrix.png")
+plt.show()
 
 print("Confusion matrix saved as confusion_matrix.png")
 

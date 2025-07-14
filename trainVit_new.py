@@ -1,29 +1,29 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
+from transformers import ViTForImageClassification, ViTFeatureExtractor
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import label_binarize
 import csv
-from tqdm import tqdm
 
-# ✅ Verbosity
+# Verbosity
 verbose = True
 
-# ✅ Device
+# Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("🚀 Using device:", device)
+print("Using device:", device)
 
-# ✅ Hyperparameters
-num_epochs = 12
+# Hyperparameters
+model_name = "google/vit-base-patch16-224"
+num_epochs = 6
 batch_size = 16
 learning_rate = 5e-5
 
@@ -31,24 +31,22 @@ data_dir = "dataset"
 train_dir = os.path.join(data_dir, "train")
 val_dir = os.path.join(data_dir, "val")
 
-# ✅ Transforms
+# Transforms
 train_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(15),
     transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 val_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# ✅ Datasets & Loaders
+# Datasets & Loaders
 train_ds = datasets.ImageFolder(train_dir, transform=train_transform)
 val_ds = datasets.ImageFolder(val_dir, transform=val_transform)
 train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
@@ -56,38 +54,32 @@ val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_worker
 
 class_names = train_ds.classes
 num_labels = len(class_names)
-print("📂 Classes:", class_names)
+print("Classes:", class_names)
 
-# ✅ ViT model from scratch
-from torchvision.models.vision_transformer import VisionTransformer
-model = VisionTransformer(
-    image_size=224,
-    patch_size=16,
-    num_layers=12,
-    num_heads=12,
-    hidden_dim=768,
-    mlp_dim=3072,
-    num_classes=num_labels
+# Model & Feature Extractor
+feature_extractor = ViTFeatureExtractor.from_pretrained(model_name)
+model = ViTForImageClassification.from_pretrained(
+    model_name, num_labels=num_labels, ignore_mismatched_sizes=True
 )
 model.to(device)
 
-# ✅ Loss, Optimizer, Scheduler
+# Loss, Optimizer, Scheduler
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=3)
 
-# ✅ Metrics storage
+# Metrics storage
 train_losses, val_losses = [], []
 train_accs, val_accs = [], []
 all_val_labels, all_val_probs = [], []
 
-# ✅ Best model
+# Best model
 best_val_acc = 0.0
 best_wts = copy.deepcopy(model.state_dict())
 
-# ✅ Training Loop with ✨ better progress bar ✨
+# Training Loop
 for epoch in range(num_epochs):
-    print(f"\n🔥 Epoch {epoch+1}/{num_epochs}")
+    print(f"\nEpoch {epoch+1}/{num_epochs}")
     for phase in ['train', 'val']:
         if phase == 'train':
             model.train()
@@ -99,32 +91,22 @@ for epoch in range(num_epochs):
 
         running_loss, running_corrects = 0.0, 0
 
-        loop = tqdm(loader, desc=f"{phase.capitalize()} [{epoch+1}/{num_epochs}]",
-                    leave=False, ncols=100)
-
-        for inputs, labels in loop:
+        for i, (inputs, labels) in enumerate(loader):
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-
             with torch.set_grad_enabled(phase == 'train'):
-                outputs = model(inputs)
+                outputs = model(inputs).logits
                 loss = criterion(outputs, labels)
                 _, preds = torch.max(outputs, 1)
-
                 if phase == 'train':
                     loss.backward()
                     optimizer.step()
 
             running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == labels.data).item()
+            running_corrects += (preds == labels.data).sum().item()
 
-            current_loss = running_loss / ((loop.n + 1) * batch_size)
-            current_acc = running_corrects / ((loop.n + 1) * batch_size)
-
-            loop.set_postfix({
-                'Loss': f"{current_loss:.4f}",
-                'Acc': f"{current_acc*100:.2f}%"
-            })
+            if verbose:
+                print(f"[{phase}] Epoch {epoch+1} Batch {i+1}/{len(loader)} Loss: {loss.item():.4f}")
 
             if phase == 'val':
                 probs = torch.softmax(outputs, 1).detach().cpu().numpy()
@@ -148,16 +130,16 @@ for epoch in range(num_epochs):
                 best_val_acc = epoch_acc
                 best_wts = copy.deepcopy(model.state_dict())
                 torch.save(best_wts, "best_vit_model.pt")
-                print("✅ Model checkpoint saved!")
+                print(">> Model checkpoint saved!")
 
-        print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc*100:.2f}%")
+        print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
 
-print(f"\n🎉 Best Validation Accuracy: {best_val_acc*100:.2f}%")
+print(f"\nBest Validation Accuracy: {best_val_acc:.4f}")
 model.load_state_dict(best_wts)
 torch.save(best_wts, "final_vit_model.pt")
-print("💾 Final model saved as final_vit_model.pt")
+print("Final model saved as final_vit_model.pt")
 
-# ✅ Loss & Accuracy Curves
+# Loss & Acc Curves
 epochs = range(1, num_epochs + 1)
 plt.figure()
 plt.plot(epochs, train_losses, label='Train Loss')
@@ -170,7 +152,7 @@ plt.legend()
 plt.savefig('loss_acc_curve.png')
 plt.close()
 
-# ✅ ROC–AUC
+# ROC–AUC
 y_true = np.concatenate(all_val_labels)
 y_score = np.vstack(all_val_probs)
 y_true_bin = label_binarize(y_true, classes=list(range(num_labels)))
@@ -189,14 +171,14 @@ for i, cname in enumerate(class_names):
     plt.savefig(filename)
     plt.close()
 
-# ✅ Save AUC CSV
+# Save AUC CSV
 with open('auc_scores.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(['Class', 'AUC'])
     for cname, score in roc_auc.items():
         writer.writerow([class_names[cname], f"{score:.4f}"])
 
-# ✅ Optional: AUC bar plot
+# Optional: AUC bar plot
 plt.figure()
 plt.bar(class_names, [roc_auc[i] for i in range(num_labels)])
 plt.title('AUC Scores by Class')
@@ -205,4 +187,4 @@ plt.ylim([0, 1])
 plt.savefig('auc_bar_plot.png')
 plt.close()
 
-print("📈 ROC curves, AUC CSV, and AUC bar plot saved.")
+print("ROC curves, AUC CSV, and AUC bar plot saved.")
