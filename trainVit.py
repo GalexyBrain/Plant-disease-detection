@@ -1,37 +1,46 @@
 import os
+# Suppress TF logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# Set number of threads for OpenMP and MKL
+os.environ['OMP_NUM_THREADS'] = '8'
+os.environ['MKL_NUM_THREADS'] = '8'
 
+import time
 import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
+from torchvision.models.vision_transformer import VisionTransformer
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import label_binarize
 import csv
 from tqdm import tqdm
+import gc
 
-# ✅ Verbosity
-verbose = True
 
-# ✅ Device
+# 🚀 Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("🚀 Using device:", device)
 
-# ✅ Hyperparameters
-num_epochs = 12
+torch.set_float32_matmul_precision('high')
+
+
+# Hyperparameters
+num_epochs = 50
 batch_size = 16
 learning_rate = 5e-5
 
-data_dir = "dataset"
+# Data directories
+data_dir = "augmented_dataset"
 train_dir = os.path.join(data_dir, "train")
 val_dir = os.path.join(data_dir, "val")
 
-# ✅ Transforms
+# Transforms
 train_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.RandomHorizontalFlip(),
@@ -48,18 +57,25 @@ val_transform = transforms.Compose([
                          [0.229, 0.224, 0.225])
 ])
 
-# ✅ Datasets & Loaders
+# Datasets & optimized DataLoaders
 train_ds = datasets.ImageFolder(train_dir, transform=train_transform)
 val_ds = datasets.ImageFolder(val_dir, transform=val_transform)
-train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
-val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4)
+train_loader = DataLoader(
+    train_ds, batch_size=batch_size, shuffle=True,
+    num_workers=8, prefetch_factor=2, persistent_workers=True,
+    pin_memory=True
+)
+val_loader = DataLoader(
+    val_ds, batch_size=batch_size, shuffle=False,
+    num_workers=8, prefetch_factor=2, persistent_workers=True,
+    pin_memory=True
+)
 
 class_names = train_ds.classes
 num_labels = len(class_names)
 print("📂 Classes:", class_names)
 
-# ✅ ViT model from scratch
-from torchvision.models.vision_transformer import VisionTransformer
+# Model definition
 model = VisionTransformer(
     image_size=224,
     patch_size=16,
@@ -68,97 +84,86 @@ model = VisionTransformer(
     hidden_dim=768,
     mlp_dim=3072,
     num_classes=num_labels
-)
-model.to(device)
+).to(device)
 
-# ✅ Loss, Optimizer, Scheduler
+# Loss, Optimizer, Scheduler
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=3)
 
-# ✅ Metrics storage
+# Metrics storage
 train_losses, val_losses = [], []
 train_accs, val_accs = [], []
 all_val_labels, all_val_probs = [], []
 
-# ✅ Best model
+# Best model tracking
 best_val_acc = 0.0
 best_wts = copy.deepcopy(model.state_dict())
 
-# ✅ Training Loop with ✨ better progress bar ✨
-for epoch in range(num_epochs):
-    print(f"\n🔥 Epoch {epoch+1}/{num_epochs}")
-    for phase in ['train', 'val']:
-        if phase == 'train':
-            model.train()
-            loader = train_loader
-        else:
-            model.eval()
-            loader = val_loader
+# Training Loop
+try:
+    for epoch in range(num_epochs):
+        print(f"\n🔥 Epoch {epoch+1}/{num_epochs}")
+        for phase in ['train', 'val']:
+            model.train() if phase=='train' else model.eval()
+            loader = train_loader if phase=='train' else val_loader
+            running_loss, running_corrects = 0.0, 0
             epoch_labels, epoch_probs = [], []
 
-        running_loss, running_corrects = 0.0, 0
+            loop = tqdm(loader, desc=f"{phase.capitalize()} [{epoch+1}/{num_epochs}]", leave=False, ncols=100)
+            for inputs, labels in loop:
+                inputs, labels = inputs.to(device), labels.to(device)
+                optimizer.zero_grad(set_to_none=True)
+                with torch.set_grad_enabled(phase=='train'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    _, preds = torch.max(outputs, 1)
+                    if phase=='train':
+                        loss.backward()
+                        optimizer.step()
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds==labels.data).item()
+                if phase=='val':
+                    probs = torch.softmax(outputs, 1).detach().cpu().numpy()
+                    epoch_probs.append(probs)
+                    epoch_labels.append(labels.detach().cpu().numpy())
+                current_loss = running_loss / ((loop.n+1)*batch_size)
+                current_acc = running_corrects / ((loop.n+1)*batch_size)
+                loop.set_postfix({'Loss':f"{current_loss:.4f}",'Acc':f"{current_acc*100:.2f}%"})
 
-        loop = tqdm(loader, desc=f"{phase.capitalize()} [{epoch+1}/{num_epochs}]",
-                    leave=False, ncols=100)
-
-        for inputs, labels in loop:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-
-            with torch.set_grad_enabled(phase == 'train'):
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                _, preds = torch.max(outputs, 1)
-
-                if phase == 'train':
-                    loss.backward()
-                    optimizer.step()
-
-            running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == labels.data).item()
-
-            current_loss = running_loss / ((loop.n + 1) * batch_size)
-            current_acc = running_corrects / ((loop.n + 1) * batch_size)
-
-            loop.set_postfix({
-                'Loss': f"{current_loss:.4f}",
-                'Acc': f"{current_acc*100:.2f}%"
-            })
-
-            if phase == 'val':
-                probs = torch.softmax(outputs, 1).detach().cpu().numpy()
-                epoch_probs.append(probs)
-                epoch_labels.append(labels.detach().cpu().numpy())
-
-        epoch_loss = running_loss / len(loader.dataset)
-        epoch_acc = running_corrects / len(loader.dataset)
-
-        if phase == 'train':
-            train_losses.append(epoch_loss)
-            train_accs.append(epoch_acc)
-        else:
-            val_losses.append(epoch_loss)
-            val_accs.append(epoch_acc)
-            all_val_probs.append(np.vstack(epoch_probs))
-            all_val_labels.append(np.concatenate(epoch_labels))
-            scheduler.step(epoch_acc)
-
-            if epoch_acc > best_val_acc:
-                best_val_acc = epoch_acc
-                best_wts = copy.deepcopy(model.state_dict())
-                torch.save(best_wts, "best_vit_model.pt")
-                print("✅ Model checkpoint saved!")
-
-        print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc*100:.2f}%")
+            epoch_loss = running_loss / len(loader.dataset)
+            epoch_acc = running_corrects / len(loader.dataset)
+            if phase=='train':
+                train_losses.append(epoch_loss)
+                train_accs.append(epoch_acc)
+            else:
+                val_losses.append(epoch_loss)
+                val_accs.append(epoch_acc)
+                all_val_probs.append(np.vstack(epoch_probs))
+                all_val_labels.append(np.concatenate(epoch_labels))
+                scheduler.step(epoch_acc)
+                if epoch_acc > best_val_acc:
+                    best_val_acc = epoch_acc
+                    best_wts = copy.deepcopy(model.state_dict())
+                    torch.save(best_wts, "best_vit_model.pt")
+                    print("✅ Model checkpoint saved!")
+            print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc*100:.2f}%")
+        
+        torch.cuda.empty_cache()
+        gc.collect()
+        all_val_probs.clear()
+        all_val_labels.clear()
+        time.sleep(0.5)
+except KeyboardInterrupt as kb:
+    print("Training interrupted by keyboard... finish training and plot graphs")
 
 print(f"\n🎉 Best Validation Accuracy: {best_val_acc*100:.2f}%")
 model.load_state_dict(best_wts)
 torch.save(best_wts, "final_vit_model.pt")
 print("💾 Final model saved as final_vit_model.pt")
 
-# ✅ Loss & Accuracy Curves
-epochs = range(1, num_epochs + 1)
+# Plot Loss & Accuracy
+epochs = range(1, num_epochs+1)
 plt.figure()
 plt.plot(epochs, train_losses, label='Train Loss')
 plt.plot(epochs, val_losses, label='Val Loss')
@@ -170,7 +175,7 @@ plt.legend()
 plt.savefig('loss_acc_curve.png')
 plt.close()
 
-# ✅ ROC–AUC
+# ROC–AUC per class and CSV
 y_true = np.concatenate(all_val_labels)
 y_score = np.vstack(all_val_probs)
 y_true_bin = label_binarize(y_true, classes=list(range(num_labels)))
@@ -180,28 +185,25 @@ for i, cname in enumerate(class_names):
     roc_auc[i] = auc(fpr[i], tpr[i])
     plt.figure()
     plt.plot(fpr[i], tpr[i], label=f'{cname} (AUC = {roc_auc[i]:.2f})')
-    plt.plot([0, 1], [0, 1], 'k--')
+    plt.plot([0,1],[0,1],'k--')
     plt.title(f'ROC Curve: {cname}')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
+    plt.xlabel('FPR')
+    plt.ylabel('TPR')
     plt.legend(loc='lower right')
-    filename = f"roc_curve_{cname.replace(' ', '_')}.png"
-    plt.savefig(filename)
+    plt.savefig(f"roc_curve_{cname.replace(' ','_')}.png")
     plt.close()
 
-# ✅ Save AUC CSV
-with open('auc_scores.csv', 'w', newline='') as csvfile:
+with open('auc_scores.csv','w',newline='') as csvfile:
     writer = csv.writer(csvfile)
-    writer.writerow(['Class', 'AUC'])
+    writer.writerow(['Class','AUC'])
     for cname, score in roc_auc.items():
         writer.writerow([class_names[cname], f"{score:.4f}"])
 
-# ✅ Optional: AUC bar plot
 plt.figure()
 plt.bar(class_names, [roc_auc[i] for i in range(num_labels)])
 plt.title('AUC Scores by Class')
 plt.ylabel('AUC')
-plt.ylim([0, 1])
+plt.ylim([0,1])
 plt.savefig('auc_bar_plot.png')
 plt.close()
 
