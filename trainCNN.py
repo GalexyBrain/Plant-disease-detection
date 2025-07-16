@@ -4,7 +4,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
 import matplotlib.pyplot as plt
 
-data_dir = "dataset"  
+data_dir = "augmented_dataset"  
 train_dir = os.path.join(data_dir, "train")
 val_dir = os.path.join(data_dir, "val")
 model_path = "CNN_Model.keras"

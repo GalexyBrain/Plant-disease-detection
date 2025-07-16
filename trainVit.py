@@ -1,9 +1,6 @@
 import os
 # Suppress TF logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-# Set number of threads for OpenMP and MKL
-os.environ['OMP_NUM_THREADS'] = '8'
-os.environ['MKL_NUM_THREADS'] = '8'
 
 import time
 import copy
@@ -31,9 +28,12 @@ torch.set_float32_matmul_precision('high')
 
 
 # Hyperparameters
-num_epochs = 50
+num_epochs = 25
 batch_size = 16
 learning_rate = 5e-5
+early_stopping = 3
+
+early_stopping_patience = early_stopping
 
 # Data directories
 data_dir = "augmented_dataset"
@@ -147,6 +147,11 @@ try:
                     best_wts = copy.deepcopy(model.state_dict())
                     torch.save(best_wts, "best_vit_model.pt")
                     print("✅ Model checkpoint saved!")
+                    early_stopping_patience = early_stopping
+                else:
+                    early_stopping_patience -= 1
+                if early_stopping_patience == 0:
+                    raise KeyboardInterrupt
             print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc*100:.2f}%")
         
         torch.cuda.empty_cache()
@@ -154,8 +159,8 @@ try:
         all_val_probs.clear()
         all_val_labels.clear()
         time.sleep(0.5)
-except KeyboardInterrupt as kb:
-    print("Training interrupted by keyboard... finish training and plot graphs")
+except Exception as ex:
+    print("Training interrupted ... finish training and plot graphs")
 
 print(f"\n🎉 Best Validation Accuracy: {best_val_acc*100:.2f}%")
 model.load_state_dict(best_wts)
@@ -163,7 +168,7 @@ torch.save(best_wts, "final_vit_model.pt")
 print("💾 Final model saved as final_vit_model.pt")
 
 # Plot Loss & Accuracy
-epochs = range(1, num_epochs+1)
+epochs = range(1, len(train_losses) + 1)
 plt.figure()
 plt.plot(epochs, train_losses, label='Train Loss')
 plt.plot(epochs, val_losses, label='Val Loss')
