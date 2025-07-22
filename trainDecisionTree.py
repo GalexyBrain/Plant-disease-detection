@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # 📁 Paths
-train_dir = "./dataset/train"
-val_dir = "./dataset/val"
+train_dir = "./augmented_dataset/train"
+val_dir = "./augmented_dataset/val"
 output_dir = "./DecisionTreeOutput"
 os.makedirs(output_dir, exist_ok=True)
 

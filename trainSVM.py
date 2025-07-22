@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # 📁 Directories
-train_dir = "./dataset/train"
-val_dir = "./dataset/val"
+train_dir = "./augmented_dataset/train"
+val_dir = "./augmented_dataset/val"
 output_dir = "./SVMOutput"
 os.makedirs(output_dir, exist_ok=True)
 
