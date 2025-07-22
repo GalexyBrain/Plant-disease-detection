@@ -9,3 +9,4 @@ archive/
 temp*
 temp.jpeg
 tomato*
+*.pth
