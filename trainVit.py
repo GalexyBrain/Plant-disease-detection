@@ -30,7 +30,7 @@ output_dir = f"results_vit_{timestamp}"
 os.makedirs(output_dir, exist_ok=True)
 print(f"📂 All results will be saved in: {output_dir}")
 # --------------------------------------------------------------------------
-
+``
 # 🚀 Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("🚀 Using device:", device)
@@ -38,10 +38,10 @@ print("🚀 Using device:", device)
 torch.set_float32_matmul_precision('high')
 
 # Hyperparameters
-num_epochs = 6
+num_epochs = 50
 batch_size = 16
 learning_rate = 5e-5
-early_stopping_patience = 3 
+early_stopping_patience = 5 
 
 # Data directories
 data_dir = "augmented_dataset"
@@ -80,7 +80,7 @@ num_labels = len(class_names)
 print("📂 Classes:", class_names)
 
 # Load the pre-trained Vision Transformer (ViT)
-model = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
+model = models.vit_b_16(weights = None)
 num_ftrs = model.heads.head.in_features
 model.heads.head = nn.Linear(num_ftrs, num_labels)
 model = model.to(device)
