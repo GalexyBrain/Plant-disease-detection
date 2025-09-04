@@ -1,0 +1,42 @@
+🔥 Epoch 27/50
+----------
+Train Epoch 27/50: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 283/283 [01:54<00:00,  2.48it/s]
+Train Loss: 0.3700 Acc: 0.8748
+Val Epoch 27/50:  19%|█████████████████████████████▎                                                                                                                                | 13/70 [00:05<00:26,  2.17it/s]
+Traceback (most recent call last):
+  File "/home/galexybrain/Desktop/Plant-disease-detection/trainResNet.py", line 159, in <module>
+    trained_model, history, all_val_labels, all_val_probs = train_model(model, criterion, optimizer, num_epochs=NUM_EPOCHS)
+  File "/home/galexybrain/Desktop/Plant-disease-detection/trainResNet.py", line 110, in train_model
+    for inputs, labels in progress_bar:
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 733, in __next__
+    data = self._next_data()
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 1488, in _next_data
+    return self._process_data(data, worker_id)
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 1550, in _process_data
+    data.reraise()
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/_utils.py", line 750, in reraise
+    raise exception
+OSError: Caught OSError in DataLoader worker process 1.
+Original Traceback (most recent call last):
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torchvision/datasets/folder.py", line 245, in __getitem__
+    sample = self.loader(path)
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torchvision/datasets/folder.py", line 284, in default_loader
+    return pil_loader(path)
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/torchvision/datasets/folder.py", line 264, in pil_loader
+    return img.convert("RGB")
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/PIL/Image.py", line 986, in convert
+    self.load()
+  File "/home/galexybrain/Desktop/Plant-disease-detection/venv/lib/python3.9/site-packages/PIL/ImageFile.py", line 387, in load
+    raise OSError(msg)
+OSError: image file is truncated (863872 bytes not processed)
+EOF
+
+

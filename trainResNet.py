@@ -21,7 +21,7 @@ print(f"Torchvision Version: {torchvision.__version__}")
 
 # --- Configuration ---
 # Set the path to your main data directory
-data_dir = 'augmented_dataset'
+data_dir = 'dataset'
 # Directory to save results with a timestamp
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 results_dir = f'ResNet_Results_{timestamp}'

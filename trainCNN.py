@@ -7,14 +7,14 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim import lr_scheduler
+from torch.optim import lr_scheduler # <- UNMODIFIED
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_curve, auc, classification_report, confusion_matrix # <- MODIFIED IMPORT
+from sklearn.metrics import roc_curve, auc, classification_report, confusion_matrix
 from sklearn.preprocessing import label_binarize
 from tqdm import tqdm
 import gc
@@ -31,7 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"🚀 Using device: {device}")
 
 # --- IMPORTANT: Update this path to your dataset location ---
-data_dir = "augmented_dataset" 
+data_dir = "dataset"
 # -----------------------------------------------------------
 
 train_dir = os.path.join(data_dir, "train")
@@ -41,8 +41,8 @@ IMG_WIDTH = 112
 IMG_HEIGHT = 112
 BATCH_SIZE = 32
 target_epochs = 50
-learning_rate = 5e-6
-early_stopping_patience = 10
+learning_rate = 5e-5
+early_stopping_patience = 50
 
 # 📂 DATA LOADING & TRANSFORMS
 # Note: transforms.ToTensor() automatically scales images to [0.0, 1.0]
@@ -65,8 +65,19 @@ image_datasets = {
 }
 
 dataloaders = {
-    'train': DataLoader(image_datasets['train'], batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True),
-    'val': DataLoader(image_datasets['val'], batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    'train': DataLoader(image_datasets['train'],
+                        batch_size=BATCH_SIZE,
+                        shuffle=True,
+                        num_workers=16,
+                        pin_memory=True,
+                        persistent_workers=True), 
+
+    'val': DataLoader(image_datasets['val'],
+                      batch_size=BATCH_SIZE,
+                      shuffle=False,
+                      num_workers=16,
+                      pin_memory=True,
+                      persistent_workers=True)
 }
 
 class_names = image_datasets['train'].classes
@@ -92,7 +103,7 @@ class DeeperCNN(nn.Module):
             nn.Conv2d(32, 64, kernel_size=5, padding='same'),
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(64),
-            nn.Conv2d(64, 128, kernel_size=5, padding='same'), 
+            nn.Conv2d(64, 128, kernel_size=5, padding='same'),
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(128),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -129,6 +140,7 @@ print(model)
 # LOSS, OPTIMIZER, SCHEDULER
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Reduces learning rate when validation accuracy has stopped improving.
 scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.2, patience=4)
 
 # TRAINING LOOP
@@ -188,7 +200,11 @@ for epoch in range(target_epochs):
         else: # Validation phase
             history['val_loss'].append(epoch_loss)
             history['val_acc'].append(epoch_acc.item())
+            
+            # ======================== CHANGE 2: SCHEDULER STEP ==========================
+            # The scheduler needs the validation accuracy to decide whether to reduce the LR
             scheduler.step(epoch_acc)
+            # ============================================================================
 
             if epoch_acc > best_val_acc:
                 best_val_acc = epoch_acc
@@ -300,7 +316,7 @@ if all_val_labels.size > 0:
     # --- NEW: CONFUSION MATRIX ---
     cm = confusion_matrix(all_val_labels, all_val_preds)
     plt.figure(figsize=(12, 10))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=class_names, yticklabels=class_names)
     plt.title('Confusion Matrix', fontsize=16)
     plt.ylabel('True Label', fontsize=12)
