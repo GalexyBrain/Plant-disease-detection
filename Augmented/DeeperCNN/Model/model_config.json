@@ -1,0 +1,25 @@
+{
+    "model_name": "DeeperCNN",
+    "num_classes": 9,
+    "class_names": [
+        "Healthy_Leaf",
+        "Healthy_Nut",
+        "Healthy_Trunk",
+        "Mahali_Koleroga",
+        "Stem_bleeding",
+        "bud borer",
+        "healthy_foot",
+        "stem cracking",
+        "yellow leaf disease"
+    ],
+    "img_height": 112,
+    "img_width": 112,
+    "batch_size": 128,
+    "target_epochs": 50,
+    "learning_rate": 5e-05,
+    "early_stopping_patience": 50,
+    "dataset_root": "augmented_dataset",
+    "device": "cuda",
+    "best_val_acc": 0.9879287003610109,
+    "best_epoch": 48
+}

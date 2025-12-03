@@ -1,285 +1,190 @@
 import os
-import time
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import copy
-import csv
-from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
-import torchvision
-from torchvision import datasets, models, transforms
-import matplotlib.pyplot as plt
+from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from transformers import ViTForImageClassification, ViTFeatureExtractor
 import numpy as np
-from tqdm import tqdm
-from sklearn.metrics import confusion_matrix, roc_curve, auc, classification_report
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import label_binarize
-import seaborn as sns
+import csv
 
-print(f"PyTorch Version: {torch.__version__}")
-print(f"Torchvision Version: {torchvision.__version__}")
+# Verbosity
+verbose = True
 
-# --- Configuration ---
-# Set the path to your main data directory
-data_dir = 'dataset'
-# Directory to save results with a timestamp
-timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-results_dir = f'ViT_Results_{timestamp}'
-os.makedirs(results_dir, exist_ok=True)
-print(f"📂 All results will be saved in: {results_dir}")
+# Device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
 
-# Model parameters
-NUM_CLASSES = 9
-BATCH_SIZE = 16
-NUM_EPOCHS = 5
-# A common learning rate for fine-tuning ViT
-LEARNING_RATE = 2e-5
+# Hyperparameters
+model_name = "google/vit-base-patch16-224"
+num_epochs = 6
+batch_size = 16
+learning_rate = 5e-5
 
-# --- Data Loading and Transformation ---
-# ViT-B/16 was trained on 224x224 images, so these transforms are appropriate.
-data_transforms = {
-    'train': transforms.Compose([
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ]),
-    'val': transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ]),
-}
+data_dir = "dataset"
+train_dir = os.path.join(data_dir, "train")
+val_dir = os.path.join(data_dir, "val")
 
-print("Initializing Datasets and Dataloaders...")
-image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x])
-                  for x in ['train', 'val']}
-dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=BATCH_SIZE, shuffle=True, num_workers=6, pin_memory=True)
-               for x in ['train', 'val']}
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
-class_names = image_datasets['train'].classes
+# Transforms
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(f"🚀 Using device: {device}")
-print(f"Found {len(class_names)} classes: {class_names}")
+# Datasets & Loaders
+train_ds = datasets.ImageFolder(train_dir, transform=train_transform)
+val_ds = datasets.ImageFolder(val_dir, transform=val_transform)
+train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=4)
+val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
+class_names = train_ds.classes
+num_labels = len(class_names)
+print("Classes:", class_names)
 
-# --- Model Definition (Fine-tuning Pretrained ViT) ---
-# Load the pretrained ViT-Base-Patch16-224 model
-model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+# Model & Feature Extractor
+feature_extractor = ViTFeatureExtractor.from_pretrained(model_name)
+model = ViTForImageClassification.from_pretrained(
+    model_name, num_labels=num_labels, ignore_mismatched_sizes=True
+)
+model.to(device)
 
-# The classifier head in ViT is in the 'heads' attribute
-# It's a single nn.Linear layer named 'head'
-num_ftrs = model.heads.head.in_features
-# Replace the classifier head with a new one for our number of classes
-model.heads.head = nn.Linear(num_ftrs, NUM_CLASSES)
-
-model = model.to(device)
-print("✅ Model setup complete. Fine-tuning a pretrained Vision Transformer.")
-
-# --- Training Setup ---
+# Loss, Optimizer, Scheduler
 criterion = nn.CrossEntropyLoss()
-# We will optimize all parameters, but with a small learning rate for fine-tuning
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=3)
 
-# --- Training and Validation Function ---
-def train_model(model, criterion, optimizer, num_epochs=25):
-    since = time.time()
+# Metrics storage
+train_losses, val_losses = [], []
+train_accs, val_accs = [], []
+all_val_labels, all_val_probs = [], []
 
-    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+# Best model
+best_val_acc = 0.0
+best_wts = copy.deepcopy(model.state_dict())
 
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
+# Training Loop
+for epoch in range(num_epochs):
+    print(f"\nEpoch {epoch+1}/{num_epochs}")
+    for phase in ['train', 'val']:
+        if phase == 'train':
+            model.train()
+            loader = train_loader
+        else:
+            model.eval()
+            loader = val_loader
+            epoch_labels, epoch_probs = [], []
 
-    # To store predictions from the best epoch for detailed analysis
-    all_val_labels = None
-    all_val_probs = None
+        running_loss, running_corrects = 0.0, 0
 
-    for epoch in range(num_epochs):
-        print(f'🔥 Epoch {epoch+1}/{num_epochs}')
-        print('-' * 10)
+        for i, (inputs, labels) in enumerate(loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            with torch.set_grad_enabled(phase == 'train'):
+                outputs = model(inputs).logits
+                loss = criterion(outputs, labels)
+                _, preds = torch.max(outputs, 1)
+                if phase == 'train':
+                    loss.backward()
+                    optimizer.step()
 
-        # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train()  # Set model to training mode
-            else:
-                model.eval()   # Set model to evaluate mode
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += (preds == labels.data).sum().item()
 
-            running_loss = 0.0
-            running_corrects = 0
-            
-            # Lists to store labels and probabilities for the current validation epoch
-            epoch_labels_list = []
-            epoch_probs_list = []
+            if verbose:
+                print(f"[{phase}] Epoch {epoch+1} Batch {i+1}/{len(loader)} Loss: {loss.item():.4f}")
 
-            # Iterate over data using a progress bar
-            progress_bar = tqdm(dataloaders[phase], desc=f'{phase.capitalize()} Epoch {epoch+1}/{num_epochs}')
-            
-            for inputs, labels in progress_bar:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                
-                # Zero the parameter gradients
-                optimizer.zero_grad()
+            if phase == 'val':
+                probs = torch.softmax(outputs, 1).detach().cpu().numpy()
+                epoch_probs.append(probs)
+                epoch_labels.append(labels.detach().cpu().numpy())
 
-                # Forward pass
-                # Track history only in train
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
+        epoch_loss = running_loss / len(loader.dataset)
+        epoch_acc = running_corrects / len(loader.dataset)
 
-                    # Backward pass + optimize only if in training phase
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
-                
-                # Statistics
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-                
-                # In validation phase, collect all predictions for later analysis
-                if phase == 'val':
-                    # Get probabilities by applying softmax to the output logits
-                    probs = torch.softmax(outputs, 1).detach().cpu()
-                    epoch_probs_list.append(probs)
-                    epoch_labels_list.append(labels.detach().cpu())
+        if phase == 'train':
+            train_losses.append(epoch_loss)
+            train_accs.append(epoch_acc)
+        else:
+            val_losses.append(epoch_loss)
+            val_accs.append(epoch_acc)
+            all_val_probs.append(np.vstack(epoch_probs))
+            all_val_labels.append(np.concatenate(epoch_labels))
+            scheduler.step(epoch_acc)
 
-            epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            if epoch_acc > best_val_acc:
+                best_val_acc = epoch_acc
+                best_wts = copy.deepcopy(model.state_dict())
+                torch.save(best_wts, "best_vit_model.pt")
+                print(">> Model checkpoint saved!")
 
-            print(f'{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
-            
-            # Record the loss and accuracy for plotting
-            history[f'{phase}_loss'].append(epoch_loss)
-            history[f'{phase}_acc'].append(epoch_acc.item())
+        print(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
 
-            # Deep copy the model if it's the best one so far
-            if phase == 'val' and epoch_acc > best_acc:
-                best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
-                print(f"✅ New best model found with validation accuracy: {best_acc:.4f}")
-                # Save the predictions from this best epoch
-                all_val_labels = torch.cat(epoch_labels_list).numpy()
-                all_val_probs = torch.cat(epoch_probs_list).numpy()
+print(f"\nBest Validation Accuracy: {best_val_acc:.4f}")
+model.load_state_dict(best_wts)
+torch.save(best_wts, "final_vit_model.pt")
+print("Final model saved as final_vit_model.pt")
 
-        print()
-
-    time_elapsed = time.time() - since
-    print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
-    print(f'🎉 Best val Acc: {best_acc:4f}')
-
-    # Load best model weights before returning
-    model.load_state_dict(best_model_wts)
-    return model, history, all_val_labels, all_val_probs
-
-# --- Execute Training ---
-print("Starting training...")
-trained_model, history, all_val_labels, all_val_probs = train_model(model, criterion, optimizer, num_epochs=NUM_EPOCHS)
-
-# --- Save Final Model ---
-print("\nSaving the best model...")
-model_save_path = os.path.join(results_dir, 'vit_b_16_best_weights.pth')
-torch.save(trained_model.state_dict(), model_save_path)
-print(f"Model saved to {model_save_path}")
-
-# --- Generate All Plots and Reports ---
-print("\nGenerating and saving plots and reports...")
-sns.set_theme(style="whitegrid")
-
-# 1. Combined Loss and Accuracy Plot
-num_actual_epochs = len(history['train_loss'])
-epochs_range = range(1, num_actual_epochs + 1)
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-ax1.plot(epochs_range, history['train_loss'], 'b-o', label='Train Loss')
-ax1.plot(epochs_range, history['val_loss'], 'r-o', label='Validation Loss')
-ax1.set_title('Model Loss', fontsize=16)
-ax1.set_xlabel('Epoch', fontsize=12)
-ax1.set_ylabel('Loss', fontsize=12)
-ax1.legend(fontsize=12)
-
-ax2.plot(epochs_range, history['train_acc'], 'b-o', label='Train Accuracy')
-ax2.plot(epochs_range, history['val_acc'], 'r-o', label='Validation Accuracy')
-ax2.set_title('Model Accuracy', fontsize=16)
-ax2.set_xlabel('Epoch', fontsize=12)
-ax2.set_ylabel('Accuracy', fontsize=12)
-ax2.legend(fontsize=12)
-
-fig.suptitle('Training and Validation Metrics', fontsize=20)
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-metrics_plot_path = os.path.join(results_dir, "loss_acc_curves_combined.png")
-plt.savefig(metrics_plot_path, dpi=300)
+# Loss & Acc Curves
+epochs = range(1, num_epochs + 1)
+plt.figure()
+plt.plot(epochs, train_losses, label='Train Loss')
+plt.plot(epochs, val_losses, label='Val Loss')
+plt.plot(epochs, train_accs, label='Train Acc')
+plt.plot(epochs, val_accs, label='Val Acc')
+plt.title('Loss & Accuracy')
+plt.xlabel('Epoch')
+plt.legend()
+plt.savefig('loss_acc_curve.png')
 plt.close()
-print(f"📈 Combined metrics plot saved to {metrics_plot_path}")
 
-# Generate other reports only if validation was performed and results were saved
-if all_val_labels is not None and all_val_probs is not None:
-    # Get predicted class indices from the probabilities
-    all_val_preds = np.argmax(all_val_probs, axis=1)
-
-    # 2. Confusion Matrix
-    cm = confusion_matrix(all_val_labels, all_val_preds)
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
-    plt.title('Confusion Matrix', fontsize=16)
-    plt.ylabel('True Label', fontsize=12)
-    plt.xlabel('Predicted Label', fontsize=12)
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
-    plt.tight_layout()
-    cm_path = os.path.join(results_dir, "confusion_matrix.png")
-    plt.savefig(cm_path, dpi=300)
+# ROC–AUC
+y_true = np.concatenate(all_val_labels)
+y_score = np.vstack(all_val_probs)
+y_true_bin = label_binarize(y_true, classes=list(range(num_labels)))
+fpr, tpr, roc_auc = {}, {}, {}
+for i, cname in enumerate(class_names):
+    fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], y_score[:, i])
+    roc_auc[i] = auc(fpr[i], tpr[i])
+    plt.figure()
+    plt.plot(fpr[i], tpr[i], label=f'{cname} (AUC = {roc_auc[i]:.2f})')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.title(f'ROC Curve: {cname}')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.legend(loc='lower right')
+    filename = f"roc_curve_{cname.replace(' ', '_')}.png"
+    plt.savefig(filename)
     plt.close()
-    print(f"📊 Confusion matrix saved to {cm_path}")
 
-    # 3. ROC Curve and AUC Scores (One-vs-Rest)
-    # Binarize the true labels for multi-class ROC analysis
-    y_true_bin = label_binarize(all_val_labels, classes=range(NUM_CLASSES))
-    fpr, tpr, roc_auc = {}, {}, {}
-    
-    plt.figure(figsize=(12, 10))
-    colors = sns.color_palette("husl", NUM_CLASSES)
-    
-    for i, color in enumerate(colors):
-        fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], all_val_probs[:, i])
-        roc_auc[i] = auc(fpr[i], tpr[i])
-        plt.plot(fpr[i], tpr[i], color=color, lw=2, label=f'ROC for {class_names[i]} (AUC = {roc_auc[i]:.3f})')
-        
-    plt.plot([0, 1], [0, 1], 'k--', lw=2, label='No-Skill Line')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate (FPR)', fontsize=12)
-    plt.ylabel('True Positive Rate (TPR)', fontsize=12)
-    plt.title('Multi-Class Receiver Operating Characteristic (ROC) Curves', fontsize=16)
-    plt.legend(loc="lower right", fontsize=10)
-    plt.grid(True)
-    roc_plot_path = os.path.join(results_dir, "roc_curves_all_classes.png")
-    plt.savefig(roc_plot_path, dpi=300)
-    plt.close()
-    print(f"📈 All-in-one ROC curve plot saved to {roc_plot_path}")
+# Save AUC CSV
+with open('auc_scores.csv', 'w', newline='') as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow(['Class', 'AUC'])
+    for cname, score in roc_auc.items():
+        writer.writerow([class_names[cname], f"{score:.4f}"])
 
-    # 4. Save AUC scores to CSV
-    auc_csv_path = os.path.join(results_dir, "auc_scores.csv")
-    with open(auc_csv_path, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(['Class', 'AUC'])
-        for i, cname in enumerate(class_names):
-            writer.writerow([cname, f"{roc_auc[i]:.4f}"])
-    print(f"📄 AUC scores saved to {auc_csv_path}")
+# Optional: AUC bar plot
+plt.figure()
+plt.bar(class_names, [roc_auc[i] for i in range(num_labels)])
+plt.title('AUC Scores by Class')
+plt.ylabel('AUC')
+plt.ylim([0, 1])
+plt.savefig('auc_bar_plot.png')
+plt.close()
 
-    # 5. Classification Report
-    report_str = classification_report(all_val_labels, all_val_preds, target_names=class_names, digits=3)
-    report_path = os.path.join(results_dir, "classification_report.txt")
-    with open(report_path, 'w') as f:
-        f.write("Classification Report\n")
-        f.write("=====================\n\n")
-        f.write(report_str)
-    print(f"📄 Classification report saved to {report_path}")
-
-else:
-    print("⚠️ Could not generate detailed reports because no validation predictions were saved from a best epoch.")
-
-print("\nAll tasks completed. ✅")
+print("ROC curves, AUC CSV, and AUC bar plot saved.")

@@ -1,4 +1,0 @@
-Model,Accuracy (%),Avg Prediction Time (s)
-ViT-B/16,99.909747,0.000317
-ResNet50,95.679152,0.000408
-DeeperCNN,91.538809,0.000160

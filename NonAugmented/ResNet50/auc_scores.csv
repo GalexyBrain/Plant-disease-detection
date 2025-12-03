@@ -1,0 +1,12 @@
+Class,AUC
+Healthy_Leaf,0.9999
+Healthy_Nut,1.0000
+Healthy_Trunk,0.9995
+Mahali_Koleroga,1.0000
+Stem_bleeding,1.0000
+bud borer,0.9993
+healthy_foot,0.9999
+stem cracking,0.9996
+yellow leaf disease,0.9998
+macro_ovr,0.9998
+weighted_ovr,0.9998

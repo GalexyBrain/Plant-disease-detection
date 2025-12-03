@@ -1,0 +1,21 @@
+Top confused class pairs (count, true, predicted):
+   13  Healthy_Leaf -> yellow leaf disease
+   11  Mahali_Koleroga -> stem cracking
+    9  yellow leaf disease -> bud borer
+    7  Healthy_Nut -> Mahali_Koleroga
+    6  stem cracking -> yellow leaf disease
+    6  healthy_foot -> stem cracking
+    5  stem cracking -> Stem_bleeding
+    5  Mahali_Koleroga -> Healthy_Nut
+    5  Healthy_Trunk -> yellow leaf disease
+    5  Healthy_Leaf -> bud borer
+    4  yellow leaf disease -> Healthy_Leaf
+    3  yellow leaf disease -> Healthy_Trunk
+    3  stem cracking -> Healthy_Trunk
+    2  yellow leaf disease -> stem cracking
+    2  bud borer -> yellow leaf disease
+    2  Stem_bleeding -> yellow leaf disease
+    2  Healthy_Trunk -> stem cracking
+    2  Healthy_Nut -> Stem_bleeding
+    2  Healthy_Leaf -> Healthy_Trunk
+    1  yellow leaf disease -> Healthy_Nut
